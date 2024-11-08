@@ -1,0 +1,8 @@
+pytest
+moto
+pytest-mock
+requests
+python-dotenv
+openai
+Flask
+firebase-admin

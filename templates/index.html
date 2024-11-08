@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content Generator</title>
+  <style>
+    #recordButton, #stopButton, #generateButtonTextWithPrompt{
+      padding: 10px 20px;
+      font-size: 16px;
+      margin: 10px;
+    }
+    #promptAudio {
+    width: 100%;       /* Ancho al 100% del contenedor */
+    height: 100px;     /* Altura personalizada */
+    font-size: 15px;   /* Tamaño de fuente más grande, si es necesario */
+  }
+  #promptText{
+    width: 100%;       /* Ancho al 100% del contenedor */
+    height: 80px;     /* Altura personalizada */
+    font-size: 15px;   /* Tamaño de fuente más grande, si es necesario */
+  }
+    #recordingIndicator {
+      width: 20px;
+      height: 20px;
+      background-color: red;
+      border-radius: 50%;
+      display: none; /* Hidden by default */
+      margin-left: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Sign language generator</h1>
+
+  <h3>REAL TIME AUDIO</h2>
+    <button id="recordButton">🎙️ Click to record</button>
+    <button id="stopButton" disabled>Stop</button>
+    <span id="recordingIndicator"></span>
+
+  <ul id="recordingsList"></ul>
+    <textarea id="promptAudio" placeholder="The real time audio text is..." readonly ></textarea>
+    <!-- <button id="generateButtonImageWithAudio">Generate image with audio</button> -->
+
+
+  <h3>PROMPT</h2>
+  <textarea id="promptText" placeholder="Enter your prompt here..."></textarea>
+  <button id="generateButtonTextWithPrompt">Create signs with response</button>
+
+
+  <h3>RESPONSE</h3>
+  <div id="output_sumary"></div>
+  <div id="output"></div>
+
+  <script>
+    const recordButton = document.getElementById('recordButton');
+    const stopButton = document.getElementById('stopButton');
+    const recordingIndicator = document.getElementById('recordingIndicator');
+    const recordingsList = document.getElementById('recordingsList');
+
+    let mediaRecorder;
+    let audioChunks = [];
+
+    // Check if the browser supports getUserMedia
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      console.log("getUserMedia is supported");
+
+      recordButton.addEventListener('click', async () => {
+          // Request access to the microphone
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+
+        // Show the recording indicator and disable the record button
+        recordingIndicator.style.display = 'inline-block';
+        recordButton.disabled = true;
+        stopButton.disabled = false;
+
+        // Start recording
+        mediaRecorder.start();
+        audioChunks = []; // Clear previous audio chunks
+
+        mediaRecorder.ondataavailable = event => {
+          audioChunks.push(event.data); // Collect audio data chunks
+        };
+   
+      });
+
+      stopButton.addEventListener('click', () => {
+        // document.getElementById('promptAudio').value = '';
+
+        // Stop recording
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+          mediaRecorder.stop();
+        }
+
+        // Hide the recording indicator and re-enable the record button
+        recordingIndicator.style.display = 'none';
+        recordButton.disabled = false;
+        stopButton.disabled = true;
+
+        let recordingCounter = 0; 
+        mediaRecorder.onstop = () => {
+          // Create a blob with the recorded audio
+          const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+          const audioUrl = URL.createObjectURL(audioBlob);
+
+          // Create audio element
+          const audio = document.createElement('audio');
+          audio.controls = true;
+          audio.src = audioUrl;
+
+          const downloadLink = document.createElement('button');
+          //downloadLink.href = audioUrl;
+          //downloadLink.download = 'recording.mp3'; 
+          downloadLink.innerText = 'Generate signs';
+          downloadLink.id = `audioToTextButton-${Date.now()}`;  
+
+          downloadLink.onclick = async () => {
+            console.log(`Button ${downloadLink.id} clicked`);
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.mp3'); 
+
+            try {
+
+              // Enviar el FormData con el archivo de audio al servidor
+              const response = await fetch('/generate_content_natural_language_with_audio', {
+                method: 'POST',
+                body: formData  
+              });
+
+            const result= await response.json();
+            document.getElementById('promptAudio').innerText = `${result.text_response_transcript}`;
+
+
+            const response_image= await fetch('/generate_content_image', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prompt_text: result.text_response_transcript})
+            });
+          
+            const result_image = await response_image.json();
+
+              // Manejo de la respuesta del servidor
+              if (result.text_response_sumary) {
+
+                // Check if text_response is an object and stringify it if needed
+                const textResponse = typeof result_image.text_response === 'object'
+                ? JSON.stringify(result_image.text_response, null, 2) // Format as JSON if it's an object
+                : result_image.text_response; // Use as is if it's a string
+   
+                document.getElementById('output_sumary').innerText = `Audio sumary: ${result.text_response_sumary}`;
+                document.getElementById('output').innerHTML = `
+                  <p>Traslated audio: ${textResponse || result_image.error}</p>
+                  <img src="${result_image.image_url}" alt="Generated image" style="width: 100%; height: 100%;"/>
+                `;
+                console.log('Transcribed Text:', result.text_response);
+              } else {
+                console.error('Error:', result.error);
+                document.getElementById('output').innerText = `Error: ${result.error}`;
+                document.getElementById('promptAudio').innerText = `Error: ${result.error}`;
+
+              }
+            } catch (error) {
+              console.error('Request failed:', error);
+            }
+          };
+          // Append to the list
+          const listItem = document.createElement('li');
+          listItem.appendChild(audio);
+          listItem.appendChild(downloadLink);
+          recordingsList.appendChild(listItem);
+        };
+      });
+    } else {
+      alert("getUserMedia is not supported in this browser.");
+    } 
+
+    document.getElementById('generateButtonTextWithPrompt').onclick = async () => {
+      const promptText = document.getElementById('promptText').value;
+      
+      // Ensure promptText exists
+      if (!promptText) {
+        alert("Please enter a prompt text!");
+        return;
+      }
+
+      const response = await fetch('/generate_content_natural_languaje', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt_text: promptText})
+      });
+
+      const result = await response.json();
+      document.getElementById('output_sumary').innerText = `${result.text_response}`;
+
+
+      const response_image = await fetch('/generate_content_image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt_text: result.text_response })
+      });
+
+      const result_image = await response_image.json();    
+
+
+       // Manejo de la respuesta del servidor
+       if (result.text_response) {
+
+        // Check if text_response is an object and stringify it if needed
+        const textResponseImage = typeof result_image.text_response === 'object'
+        ? JSON.stringify(result_image.text_response, null, 2) // Format as JSON if it's an object
+        : result_image.text_response; // Use as is if it's a string
+        document.getElementById('output').innerHTML = `
+        <p>Traslated audio: ${textResponseImage|| result_image.error}</p>
+        <img src="${result_image.image_url}" alt="Generated image" style="width: 100%; height: 100%;"/>
+        `;
+        console.log('Transcribed Text:', result.text_response);
+        } else {
+        console.error('Error:', result.error);
+        document.getElementById('output').innerText = `Error: ${result.error}`;
+        document.getElementById('promptAudio').innerText = `Error: ${result.error}`;
+
+        }
+    };
+  
+    document.getElementById('generateButtonImageWithText').onclick = async () => {
+      const promptText = document.getElementById('promptText').value;
+      
+      // Ensure promptText exists
+      if (!promptText) {
+        alert("Please enter a prompt!");
+        return;
+      }
+
+      const response = await fetch('/generate_content_image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt_text: promptText })
+      });
+
+      const result = await response.json();
+
+      // Check if text_response is an object and stringify it if needed
+      const textResponse = typeof result.text_response === 'object'
+        ? JSON.stringify(result.text_response, null, 2) // Format as JSON if it's an object
+        : result.text_response; // Use as is if it's a string
+        
+            document.getElementById('output').innerHTML = `
+          <p>${textResponse || result.error}</p>
+          <img src="${result.image_url}" alt="Generated image" style="width: 100%; height: 100%;"/>
+        `;
+          };
+  
+
+ </script>
+</body>
+</html>
